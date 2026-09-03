@@ -1,0 +1,103 @@
+{
+  "version": "1.0",
+  "generated_at": "2026-09-03T11:38:54.319Z",
+  "kits": [
+    {
+      "id": "case-01",
+      "status": "ok",
+      "kit": {
+        "source": {
+          "company": "localhost",
+          "company_url": "http://localhost:8099/acme/",
+          "role": "Interview Preparation",
+          "location": "",
+          "jd_chars": 210,
+          "researched_at": "2026-09-03T11:38:54.316Z",
+          "pages_used": []
+        },
+        "company_brief": {
+          "summary": "Company research unavailable; kit generated from the job description.",
+          "what_they_do": "",
+          "sources": []
+        },
+        "role": {
+          "title": "Senior Engineering Role",
+          "seniority": "Senior",
+          "responsibilities": [],
+          "requirements": [
+            {
+              "id": "r1",
+              "text": "We are looking for a senior engineer with 5+ years of Node.js experience, strong MongoDB skills, REST APIs, Docker and CI/CD. You will mentor engineers and participate in system design.",
+              "kind": "experience",
+              "priority": "must"
+            }
+          ]
+        },
+        "questions": [
+          {
+            "id": "q1",
+            "requirement_ids": [
+              "r1"
+            ],
+            "category": "technical",
+            "prompt": "Explain your practical experience with: We are looking for a senior engineer with 5+ years of Node.js experience, strong MongoDB skills, REST APIs, Docker and CI/CD. You will mentor engineers and participate in system design.",
+            "answer_outline": "Give a concise example from your work, explain your approach, key decisions, trade-offs, and measurable result.",
+            "difficulty": 2
+          }
+        ],
+        "flashcards": [
+          {
+            "id": "f1",
+            "front": "We are looking for a senior engineer with 5+ years of Node.js experience, strong MongoDB skills, REST APIs, Docker and CI/CD. You will mentor engineers and participate in system design.",
+            "back": "Be ready to explain your hands-on experience, architecture decisions, challenges, testing approach, and production results.",
+            "requirement_ids": [
+              "r1"
+            ]
+          }
+        ],
+        "schedule": {
+          "days_available": 5,
+          "days": [
+            {
+              "day": 1,
+              "focus": "We are looking for a senior engineer with 5+ years of Node.js experience, strong MongoDB skills, REST APIs, Docker and CI/CD. You will mentor engineers and participate in system design.",
+              "question_ids": [
+                "q1"
+              ],
+              "minutes": 60
+            },
+            {
+              "day": 2,
+              "focus": "We are looking for a senior engineer with 5+ years of Node.js experience, strong MongoDB skills, REST APIs, Docker and CI/CD. You will mentor engineers and participate in system design.",
+              "question_ids": [],
+              "minutes": 60
+            },
+            {
+              "day": 3,
+              "focus": "We are looking for a senior engineer with 5+ years of Node.js experience, strong MongoDB skills, REST APIs, Docker and CI/CD. You will mentor engineers and participate in system design.",
+              "question_ids": [],
+              "minutes": 60
+            },
+            {
+              "day": 4,
+              "focus": "We are looking for a senior engineer with 5+ years of Node.js experience, strong MongoDB skills, REST APIs, Docker and CI/CD. You will mentor engineers and participate in system design.",
+              "question_ids": [],
+              "minutes": 60
+            },
+            {
+              "day": 5,
+              "focus": "We are looking for a senior engineer with 5+ years of Node.js experience, strong MongoDB skills, REST APIs, Docker and CI/CD. You will mentor engineers and participate in system design.",
+              "question_ids": [],
+              "minutes": 60
+            }
+          ]
+        },
+        "coverage": {
+          "uncovered_requirement_ids": [],
+          "passes": 2
+        }
+      },
+      "error": null
+    }
+  ]
+}
