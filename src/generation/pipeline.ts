@@ -1,556 +1,380 @@
 import {
-    Flashcard,
-    InterviewKit,
-    Question,
-    Requirement
-  } from "../types.js";
-  
-  import { researchCompany } from "../research/crawler.js";
-  import { generateJson } from "./llm.js";
-  import { allocateSchedule } from "../scheduling/scheduler.js";
-  
-  function extractRequirements(
-    jd: string
-  ): Requirement[] {
-    const text = jd
-      .replace(/\r/g, "\n")
-      .replace(/[•●▪]/g, "\n")
-      .replace(/\s+/g, " ")
-      .trim();
-  
-    const requirements: Requirement[] = [];
-  
-    const patterns: Array<{
-      pattern: RegExp;
-      kind: Requirement["kind"];
-      priority: Requirement["priority"];
-    }> = [
-      {
-        pattern: /\b\d+\+?\s*years?\b[^.]*?(?:experience|development|engineering)[^.]*\.?/gi,
-        kind: "experience",
-        priority: "must"
-      },
-      {
-        pattern: /\bNode\.?js\b/gi,
-        kind: "technical",
-        priority: "must"
-      },
-      {
-        pattern: /\bExpress(?:\.js)?\b/gi,
-        kind: "technical",
-        priority: "must"
-      },
-      {
-        pattern: /\bREST(?:ful)?\s+API[s]?\b/gi,
-        kind: "technical",
-        priority: "must"
-      },
-      {
-        pattern: /\bMongoDB\b/gi,
-        kind: "technical",
-        priority: "must"
-      },
-      {
-        pattern: /\bDocker\b/gi,
-        kind: "technical",
-        priority: "must"
-      },
-      {
-        pattern: /\bCI\/CD\b/gi,
-        kind: "technical",
-        priority: "must"
-      },
-      {
-        pattern: /\bautomated testing\b|\bunit testing\b|\bintegration testing\b/gi,
-        kind: "technical",
-        priority: "must"
-      },
-      {
-        pattern: /\bsystem design\b/gi,
-        kind: "technical",
-        priority: "preferred"
-      },
-      {
-        pattern: /\bcloud platforms?\b|\bAWS\b|\bAzure\b|\bGCP\b/gi,
-        kind: "technical",
-        priority: "preferred"
-      }
-    ];
-  
-    for (const item of patterns) {
-      const matches = text.match(item.pattern);
-  
-      if (!matches) {
-        continue;
-      }
-  
-      for (const match of matches) {
-        const requirementText = match
-          .trim()
-          .replace(/\s+/g, " ");
-  
-        const exists = requirements.some(
-          (requirement) =>
-            requirement.text.toLowerCase() ===
-            requirementText.toLowerCase()
-        );
-  
-        if (!exists) {
-          requirements.push({
-            id: `r${requirements.length + 1}`,
-            text: requirementText,
-            kind: item.kind,
-            priority: item.priority
-          });
-        }
-      }
+  Flashcard,
+  InterviewKit,
+  Question,
+  Requirement
+} from "../types.js";
+
+import { researchCompany } from "../research/crawler.js";
+import { generateJson } from "./llm.js";
+import { allocateSchedule } from "../scheduling/scheduler.js";
+
+const REQUIREMENT_KINDS: Requirement["kind"][] = [
+  "technical",
+  "experience",
+  "domain",
+  "soft_skill",
+  "other"
+];
+
+const PRIORITIES: Requirement["priority"][] = [
+  "must",
+  "preferred"
+];
+
+const CATEGORIES: Question["category"][] = [
+  "technical",
+  "behavioral",
+  "system_design",
+  "practical",
+  "domain"
+];
+
+const DEFAULT_ANSWER_OUTLINE =
+  "Explain the context, your approach, important technical decisions, " +
+  "trade-offs, testing or validation, challenges, and measurable outcome.";
+
+const DEFAULT_FLASHCARD_BACK =
+  "Be ready to explain the concept, how you have used it, important " +
+  "implementation decisions, trade-offs, common problems, and production considerations.";
+
+function normalizeText(value: unknown): string {
+  return typeof value === "string"
+    ? value.replace(/\s+/g, " ").trim()
+    : "";
+}
+
+function normalizeKey(value: string): string {
+  return normalizeText(value)
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+}
+
+function isKind(value: unknown): value is Requirement["kind"] {
+  return typeof value === "string" && REQUIREMENT_KINDS.includes(value as Requirement["kind"]);
+}
+
+function isPriority(value: unknown): value is Requirement["priority"] {
+  return typeof value === "string" && PRIORITIES.includes(value as Requirement["priority"]);
+}
+
+function isCategory(value: unknown): value is Question["category"] {
+  return typeof value === "string" && CATEGORIES.includes(value as Question["category"]);
+}
+
+function isDifficulty(value: unknown): value is Question["difficulty"] {
+  return value === 1 || value === 2 || value === 3;
+}
+
+function dedupeRequirements(
+  items: Array<{
+    text: string;
+    kind: Requirement["kind"];
+    priority: Requirement["priority"];
+  }>
+): Requirement[] {
+  const seen = new Set<string>();
+  const requirements: Requirement[] = [];
+
+  for (const item of items) {
+    const text = normalizeText(item.text);
+    const key = normalizeKey(text);
+
+    if (text.length < 3 || !key || seen.has(key)) continue;
+
+    seen.add(key);
+    requirements.push({
+      id: `r${requirements.length + 1}`,
+      text,
+      kind: isKind(item.kind) ? item.kind : "other",
+      priority: isPriority(item.priority) ? item.priority : "must"
+    });
+  }
+
+  return requirements;
+}
+
+/**
+ * Deterministic fallback only. The normal path is LLM extraction from the
+ * complete JD, so arbitrary technologies do not require code changes here.
+ */
+function extractRequirements(jd: string): Requirement[] {
+  const text = jd
+    .replace(/\r/g, "\n")
+    .replace(/[•●▪]/g, "\n")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const candidates: Array<{
+    pattern: RegExp;
+    kind: Requirement["kind"];
+    priority: Requirement["priority"];
+  }> = [
+    {
+      pattern: /\b\d+\+?\s*years?\b[^.]*?(?:experience|development|engineering)[^.]*\.?/gi,
+      kind: "experience",
+      priority: "must"
+    },
+    {
+      pattern: /\b(?:must|required|required to|experience with|proficient in|strong knowledge of|knowledge of)\b[^.]{10,160}/gi,
+      kind: "other",
+      priority: "must"
+    },
+    {
+      pattern: /\b(?:nice to have|preferred|plus|bonus)\b[^.]{10,160}/gi,
+      kind: "other",
+      priority: "preferred"
     }
-  
-    /*
-     * If the JD doesn't contain recognizable
-     * technology keywords, retain useful JD
-     * content instead of producing an empty kit.
-     */
-    if (requirements.length === 0) {
-      const sentences = text
-        .split(/[.!?]/)
-        .map((sentence) => sentence.trim())
-        .filter((sentence) => sentence.length >= 15)
-        .slice(0, 10);
-  
-      for (const sentence of sentences) {
-        requirements.push({
-          id: `r${requirements.length + 1}`,
-          text: sentence,
-          kind: "other",
-          priority: "must"
+  ];
+
+  const found: Array<{
+    text: string;
+    kind: Requirement["kind"];
+    priority: Requirement["priority"];
+  }> = [];
+
+  for (const candidate of candidates) {
+    for (const match of text.match(candidate.pattern) ?? []) {
+      const value = normalizeText(match)
+        .replace(/^[-:;,\s]+/, "")
+        .replace(/[;,.]+$/, "");
+
+      if (value.length >= 8) {
+        found.push({
+          text: value,
+          kind: candidate.kind,
+          priority: candidate.priority
         });
       }
     }
-  
-    return requirements;
   }
-  
-  function createQuestions(requirements: Requirement[]): Question[] {
-    const questions: Question[] = [];
-  
-    for (const requirement of requirements) {
-      const text = requirement.text.toLowerCase();
-  
-      let prompt = `Explain your practical experience with ${requirement.text}.`;
-      let category: Question["category"] = "technical";
-      let difficulty: Question["difficulty"] = 2;
-  
-      if (text.includes("node")) {
-        prompt =
-          "How would you design a production Node.js service to handle high traffic and concurrent requests?";
-        difficulty = 2;
-      } else if (text.includes("express")) {
-        prompt =
-          "How would you structure an Express.js application for scalability, error handling, authentication, and maintainability?";
-        difficulty = 2;
-      } else if (text.includes("rest")) {
-        prompt =
-          "How would you design a REST API for a production application? Explain resource design, validation, authentication, errors, and versioning.";
-        difficulty = 2;
-      } else if (text.includes("mongodb")) {
-        prompt =
-          "How would you design MongoDB collections and indexes for a high-traffic application? Explain your decisions and trade-offs.";
-        difficulty = 3;
-      } else if (text.includes("docker")) {
-        prompt =
-          "How would you containerize a backend application with Docker for development and production?";
-        difficulty = 2;
-      } else if (text.includes("ci/cd")) {
-        prompt =
-          "Describe a CI/CD pipeline you would build for a backend application, including testing, build, deployment, and rollback.";
-        difficulty = 3;
-      } else if (
-        text.includes("testing") ||
-        text.includes("unit testing") ||
-        text.includes("integration testing")
-      ) {
-        prompt =
-          "How would you design unit and integration tests for a backend API? Give examples of what you would mock and what you would test end-to-end.";
-        difficulty = 2;
-      } else if (text.includes("system design")) {
-        prompt =
-          "Design a scalable backend system for a high-traffic application. Explain the API, database, caching, scaling, reliability, and monitoring strategy.";
-        category = "system_design";
-        difficulty = 3;
-      } else if (
-        text.includes("cloud") ||
-        text.includes("aws") ||
-        text.includes("azure") ||
-        text.includes("gcp")
-      ) {
-        prompt =
-          "How would you deploy and operate a production backend application on a cloud platform?";
-        difficulty = 3;
-      } else if (
-        requirement.kind === "soft_skill"
-      ) {
-        prompt =
-          `Tell me about a situation where you demonstrated ${requirement.text}. What was the challenge, what did you do, and what was the result?`;
-        category = "behavioral";
-        difficulty = 2;
-      } else if (
-        requirement.kind === "experience"
-      ) {
-        prompt =
-          `Describe your hands-on experience related to ${requirement.text}. What projects did you work on, what decisions did you make, and what results did you achieve?`;
-        category = "practical";
-        difficulty = 2;
-      }
-  
-      questions.push({
-        id: `q${questions.length + 1}`,
-        requirement_ids: [requirement.id],
-        category,
-        prompt,
-        answer_outline:
-          "Structure the answer with the context, your approach, important technical decisions, trade-offs, challenges, testing/validation, and measurable outcome.",
-        difficulty
+
+  if (found.length === 0) {
+    for (const sentence of text
+      .split(/[.!?]/)
+      .map((value) => value.trim())
+      .filter((value) => value.length >= 20)
+      .slice(0, 10)) {
+      found.push({
+        text: sentence,
+        kind: "other",
+        priority: "must"
       });
     }
-  
-    return questions;
+  }
+
+  return dedupeRequirements(found);
 }
-  
-function createSecondPassQuestions(
-    requirements: Requirement[],
-    existingQuestions: Question[]
-  ): Question[] {
-    const questions: Question[] = [];
-  
-    for (const requirement of requirements) {
-      const text = requirement.text.toLowerCase();
-  
-      let prompt =
-        `Give a real-world example demonstrating your experience with ${requirement.text}. ` +
-        `Explain the problem, your implementation, trade-offs, and result.`;
-  
-      let category: Question["category"] = "practical";
-      let difficulty: Question["difficulty"] = 2;
-  
-      if (text.includes("system design")) {
-        prompt =
-          "Design a production-ready system related to this requirement. Explain architecture, scalability, data storage, failure handling, monitoring, and trade-offs.";
-  
-        category = "system_design";
-        difficulty = 3;
-      } else if (
-        text.includes("node") ||
-        text.includes("express") ||
-        text.includes("api") ||
-        text.includes("mongodb")
-      ) {
-        prompt =
-          `Describe a production problem you solved using ${requirement.text}. ` +
-          "What was the architecture, what problems occurred, and how did you improve performance or reliability?";
-  
-        category = "practical";
-        difficulty = 3;
-      } else if (
-        text.includes("docker") ||
-        text.includes("ci/cd") ||
-        text.includes("cloud")
-      ) {
-        prompt =
-          `Explain how you would use ${requirement.text} in a production deployment. ` +
-          "Include build, configuration, deployment, monitoring, failure handling, and rollback.";
-  
-        category = "practical";
-        difficulty = 3;
-      } else if (
-        text.includes("testing")
-      ) {
-        prompt =
-          `Give a practical testing strategy for ${requirement.text}. ` +
-          "Explain unit tests, integration tests, mocks, test data, and CI execution.";
-  
-        category = "practical";
-        difficulty = 2;
-      }
-  
-      questions.push({
-        id: `q${existingQuestions.length + questions.length + 1}`,
-        requirement_ids: [requirement.id],
-        category,
-        prompt,
-        answer_outline:
-          "Explain the situation, architecture or implementation, technical decisions, alternatives considered, testing, trade-offs, and measurable outcome.",
-        difficulty
-      });
-    }
-  
-    return questions;
+
+function mergeRequirements(
+  primary: Requirement[],
+  fallback: Requirement[]
+): Requirement[] {
+  const items = primary.map((item) => ({
+    text: item.text,
+    kind: item.kind,
+    priority: item.priority
+  }));
+  const seen = new Set(primary.map((item) => normalizeKey(item.text)));
+
+  for (const item of fallback) {
+    const key = normalizeKey(item.text);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    items.push({
+      text: item.text,
+      kind: item.kind,
+      priority: item.priority
+    });
   }
-  
-  function createFlashcards(
-    requirements: Requirement[]
-  ): Flashcard[] {
-    const flashcards: Flashcard[] = [];
-  
-    for (const requirement of requirements) {
-      const text = requirement.text.toLowerCase();
-  
-      let front = requirement.text;
-      let back =
-        "Be prepared to explain your practical experience, implementation decisions, challenges, trade-offs, testing, and production results.";
-  
-      if (text.includes("node")) {
-        front = "Node.js: What makes it suitable for scalable backend applications?";
-        back =
-          "Node.js uses an event-driven, non-blocking I/O model. Be ready to discuss the event loop, asynchronous operations, concurrency, clustering, worker threads, and handling CPU-intensive work.";
-      } else if (text.includes("express")) {
-        front = "Express.js: How do you structure a production API?";
-        back =
-          "Use clear routing, controllers/services, validation, centralized error handling, authentication middleware, logging, configuration management, and appropriate separation of concerns.";
-      } else if (text.includes("rest")) {
-        front = "REST API: What are the key design principles?";
-        back =
-          "Use resource-oriented URLs, appropriate HTTP methods/status codes, validation, authentication/authorization, consistent error responses, pagination, versioning, and idempotency where appropriate.";
-      } else if (text.includes("mongodb")) {
-        front = "MongoDB: How do you optimize query performance?";
-        back =
-          "Analyze query patterns, create appropriate indexes, avoid unnecessary document growth, use projections, pagination, aggregation carefully, and verify performance with explain().";
-      } else if (text.includes("docker")) {
-        front = "Docker: What makes a production container image effective?";
-        back =
-          "Use a small base image, multi-stage builds, non-root users, environment-based configuration, predictable startup commands, health checks, and avoid putting secrets inside the image.";
-      } else if (text.includes("ci/cd")) {
-        front = "CI/CD: What should a backend deployment pipeline contain?";
-        back =
-          "Typically linting, automated tests, build verification, security checks, artifact creation, deployment, health checks, monitoring, and a rollback strategy.";
-      } else if (
-        text.includes("testing") ||
-        text.includes("unit testing") ||
-        text.includes("integration testing")
-      ) {
-        front = "Backend testing: Unit vs integration tests?";
-        back =
-          "Unit tests isolate individual functions or components. Integration tests verify multiple components working together, such as an API with a database. Use both to balance speed and confidence.";
-      } else if (text.includes("system design")) {
-        front = "System design: What areas should you consider for a scalable backend?";
-        back =
-          "Consider APIs, data storage, caching, load balancing, horizontal scaling, asynchronous processing, availability, consistency, observability, security, failure handling, and cost.";
-      } else if (
-        text.includes("cloud") ||
-        text.includes("aws") ||
-        text.includes("azure") ||
-        text.includes("gcp")
-      ) {
-        front = "Cloud deployment: What should you consider for production?";
-        back =
-          "Consider compute, networking, storage, secrets, autoscaling, monitoring, logging, backups, security, availability, deployment strategy, and cost.";
-      } else if (requirement.kind === "experience") {
-        front = `Experience: How would you demonstrate ${requirement.text}?`;
-        back =
-          "Use a specific project example. Explain your responsibility, technical decisions, challenges, measurable outcome, and what you learned.";
-      } else if (requirement.kind === "soft_skill") {
-        front = `Behavioral: How have you demonstrated ${requirement.text}?`;
-        back =
-          "Use the STAR structure: Situation, Task, Action, Result. Focus on your specific contribution and the outcome.";
-      }
-  
-      flashcards.push({
-        id: `f${flashcards.length + 1}`,
-        front,
-        back,
-        requirement_ids: [requirement.id]
-      });
-    }
-  
-    return flashcards;
-  }
-  
-  function calculateCoverage(
-    requirements: Requirement[],
-    questions: Question[]
-  ): string[] {
-    const coveredRequirementIds = new Set<string>();
-  
-    for (const question of questions) {
-      if (
-        question.prompt.trim().length < 20 ||
-        question.answer_outline.trim().length < 20
-      ) {
-        continue;
-      }
-  
-      for (const requirementId of question.requirement_ids) {
-        coveredRequirementIds.add(requirementId);
-      }
-    }
-  
-    return requirements
-      .filter(
-        (requirement) =>
-          !coveredRequirementIds.has(requirement.id)
-      )
-      .map((requirement) => requirement.id);
-  }
-  
-function createCompanyBrief(
-    companyUrl: string,
-    pages: Array<{ url: string; title: string; text: string }>
-  ) {
-    const companyName = new URL(companyUrl).hostname
-      .replace(/^www\./, "")
-      .split(".")[0]
-      .replace(/[-_]/g, " ");
-  
-    if (pages.length === 0) {
-      return {
-        summary: `Company research was unavailable for ${companyName}.`,
-        what_they_do:
-          "No company website content was available. The interview kit was generated primarily from the job description.",
-        sources: []
-      };
-    }
-  
-    const usefulPages = pages
-      .filter((page) => page.text.length > 50)
-      .slice(0, 5);
-  
-    const combinedText = usefulPages
-      .map((page) => {
-        const title = page.title ? `${page.title}. ` : "";
-        return `${title}${page.text}`;
-      })
-      .join(" ")
-      .replace(/\s+/g, " ")
-      .trim();
-  
-    const sentences = combinedText
-      .split(/(?<=[.!?])\s+/)
-      .map((sentence) => sentence.trim())
-      .filter((sentence) => sentence.length >= 40);
-  
-    const selected = sentences.slice(0, 4);
-  
-    const whatTheyDo =
-      selected.length > 0
-        ? selected.join(" ").slice(0, 1000)
-        : combinedText.slice(0, 1000);
-  
-    return {
-      summary: `Research completed using ${usefulPages.length} company website page(s).`,
-      what_they_do: whatTheyDo,
-      sources: usefulPages.map((page) => page.url)
-    };
+
+  return dedupeRequirements(items);
 }
-  
-function extractRoleInfo(jd: string) {
-    const text = jd
-      .replace(/\r/g, "\n")
-      .replace(/[•●▪]/g, "\n")
-      .replace(/\s+/g, " ")
-      .trim();
-  
-    let title = "Engineering Role";
-  
-    const titleMatch = text.match(
-      /\b(Senior|Lead|Principal|Staff|Junior|Mid[- ]Level)?\s*(Backend|Frontend|Full[- ]Stack|Software|Web|Platform|DevOps|Data|Cloud)?\s*(Engineer|Developer|Architect)\b/i
-    );
-  
-    if (titleMatch) {
-      title = titleMatch[0].trim();
+
+function createFallbackQuestions(requirements: Requirement[]): Question[] {
+  return requirements.map((requirement, index) => {
+    let category: Question["category"] = "technical";
+    let prompt =
+      `How would you apply ${requirement.text} in a real production project? ` +
+      "Explain your approach, decisions, trade-offs, and validation.";
+
+    if (requirement.kind === "soft_skill") {
+      category = "behavioral";
+      prompt =
+        `Tell me about a real situation where you demonstrated ${requirement.text}. ` +
+        "What was the situation, what did you do, and what was the result?";
+    } else if (requirement.kind === "experience") {
+      category = "practical";
+      prompt =
+        `Describe your hands-on experience with ${requirement.text}. ` +
+        "What did you own, what challenges did you face, and what was the outcome?";
+    } else if (requirement.kind === "domain") {
+      category = "domain";
     }
-  
-    let seniority = "Mid";
-  
-    if (/\bprincipal\b|\bstaff\b/i.test(text)) {
-      seniority = "Staff/Principal";
-    } else if (/\blead\b/i.test(text)) {
-      seniority = "Lead";
-    } else if (/\bsenior\b/i.test(text)) {
-      seniority = "Senior";
-    } else if (/\bjunior\b/i.test(text)) {
-      seniority = "Junior";
-    }
-  
-    const responsibilitySection = text.match(
-      /(?:responsibilities|what you.ll do|you will|role responsibilities)\s*[:\-]?\s*(.*?)(?=\b(?:requirements|qualifications|skills|preferred|experience)\b|$)/i
-    );
-  
-    let responsibilities: string[] = [];
-  
-    if (responsibilitySection?.[1]) {
-      responsibilities = responsibilitySection[1]
-        .split(/(?<=[.!?])\s+|;\s+/)
-        .map((item) => item.trim())
-        .filter((item) => item.length >= 20)
-        .slice(0, 10);
-    }
-  
-    if (responsibilities.length === 0) {
-      responsibilities = text
-        .split(/(?<=[.!?])\s+/)
-        .map((sentence) => sentence.trim())
-        .filter(
-          (sentence) =>
-            sentence.length >= 30 &&
-            /build|develop|design|maintain|implement|lead|manage|develop|deploy/i.test(
-              sentence
-            )
-        )
-        .slice(0, 8);
-    }
-  
+
     return {
-      title,
-      seniority,
-      responsibilities
+      id: `q${index + 1}`,
+      requirement_ids: [requirement.id],
+      category,
+      prompt,
+      answer_outline: DEFAULT_ANSWER_OUTLINE,
+      difficulty: 2
     };
+  });
+}
+
+function createFallbackFlashcards(requirements: Requirement[]): Flashcard[] {
+  return requirements.map((requirement, index) => ({
+    id: `f${index + 1}`,
+    front: requirement.text,
+    back: DEFAULT_FLASHCARD_BACK,
+    requirement_ids: [requirement.id]
+  }));
+}
+
+function calculateCoverage(
+  requirements: Requirement[],
+  questions: Question[]
+): string[] {
+  const validIds = new Set(requirements.map((item) => item.id));
+  const covered = new Set<string>();
+
+  for (const question of questions) {
+    if (
+      normalizeText(question.prompt).length < 20 ||
+      normalizeText(question.answer_outline).length < 20
+    ) continue;
+
+    for (const id of question.requirement_ids) {
+      if (validIds.has(id)) covered.add(id);
+    }
   }
-  async function generateRequirementsWithLLM(
-    jd: string,
-    fallback: Requirement[]
-  ): Promise<Requirement[]> {
-    const systemPrompt = `
-  You are an expert technical recruiter and engineering interviewer.
-  
-  Extract the important requirements from the job description.
-  
-  Return ONLY valid JSON in this exact format:
-  
-  {
-    "requirements": [
-      {
-        "text": "requirement text",
-        "kind": "technical",
-        "priority": "must"
-      }
-    ]
+
+  return requirements
+    .filter((requirement) => !covered.has(requirement.id))
+    .map((requirement) => requirement.id);
+}
+
+function normalizeQuestions(
+  raw: unknown,
+  requirements: Requirement[]
+): Question[] {
+  if (!Array.isArray(raw)) return [];
+
+  const questions: Question[] = [];
+
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+
+    const value = item as Record<string, unknown>;
+    const index = value.requirement_index;
+
+    if (
+      !Number.isInteger(index) ||
+      (index as number) < 0 ||
+      (index as number) >= requirements.length
+    ) continue;
+
+    const prompt = normalizeText(value.prompt);
+    const answer = normalizeText(value.answer_outline);
+    if (prompt.length < 20) continue;
+
+    const requirement = requirements[index as number];
+
+    questions.push({
+      id: `q${questions.length + 1}`,
+      requirement_ids: [requirement.id],
+      category: isCategory(value.category)
+        ? value.category
+        : requirement.kind === "soft_skill"
+          ? "behavioral"
+          : requirement.kind === "domain"
+            ? "domain"
+            : "technical",
+      prompt,
+      answer_outline: answer.length >= 20 ? answer : DEFAULT_ANSWER_OUTLINE,
+      difficulty: isDifficulty(value.difficulty) ? value.difficulty : 2
+    });
   }
-  
-  Allowed kind values:
-  - technical
-  - experience
-  - domain
-  - soft_skill
-  - other
-  
-  Allowed priority values:
-  - must
-  - preferred
-  
-  Rules:
-  - Extract individual requirements, not the entire paragraph.
-  - Preserve important technologies and skills.
-  - Separate different technologies into separate requirements.
-  - Do not invent requirements that are not supported by the JD.
-  - Keep the requirement text concise.
-  `;
-  
-    const userPrompt = `
-  Job Description:
-  
-  ${jd}
-  `;
-  
+
+  return questions;
+}
+
+function normalizeFlashcards(
+  raw: unknown,
+  requirements: Requirement[]
+): Flashcard[] {
+  if (!Array.isArray(raw)) return [];
+
+  const flashcards: Flashcard[] = [];
+
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+
+    const value = item as Record<string, unknown>;
+    const index = value.requirement_index;
+
+    if (
+      !Number.isInteger(index) ||
+      (index as number) < 0 ||
+      (index as number) >= requirements.length
+    ) continue;
+
+    const front = normalizeText(value.front);
+    const back = normalizeText(value.back);
+    if (front.length < 3 || back.length < 10) continue;
+
+    flashcards.push({
+      id: `f${flashcards.length + 1}`,
+      front,
+      back,
+      requirement_ids: [requirements[index as number].id]
+    });
+  }
+
+  return flashcards;
+}
+
+async function generateRequirementsWithLLM(
+  jd: string,
+  fallback: Requirement[]
+): Promise<Requirement[]> {
+  const systemPrompt = `
+You are an expert technical recruiter and engineering interviewer.
+
+Analyze the ENTIRE job description and extract all interview-relevant requirements.
+
+Return ONLY valid JSON:
+{
+  "requirements": [
+    {
+      "text": "requirement text",
+      "kind": "technical",
+      "priority": "must"
+    }
+  ]
+}
+
+Allowed kind values: technical, experience, domain, soft_skill, other.
+Allowed priority values: must, preferred.
+
+Rules:
+- Read the entire JD.
+- Extract programming languages, frameworks, libraries, databases, cloud services,
+  infrastructure tools, APIs, testing tools, architecture concepts, methodologies,
+  domain knowledge, responsibilities, experience, and soft skills.
+- Preserve specific technology/product names exactly where possible.
+- Do not use a predefined technology list.
+- Include unfamiliar or uncommon technologies if they appear in the JD.
+- Separate materially different technologies into separate requirements.
+- Include required and preferred skills.
+- Mark explicit requirements as must and nice-to-have/preferred items as preferred.
+- Do not invent anything not supported by the JD.
+- Avoid copying whole paragraphs.
+`;
+
+  try {
     const result = await generateJson<{
       requirements?: Array<{
         text: string;
@@ -559,80 +383,56 @@ function extractRoleInfo(jd: string) {
       }>;
     }>(
       systemPrompt,
-      userPrompt,
+      `Job Description:\n\n${jd}`,
       { requirements: [] }
     );
-  
-    if (!result.requirements?.length) {
-      return fallback;
-    }
-  
-    return result.requirements
-      .filter(
-        (item) =>
-          typeof item.text === "string" &&
-          item.text.trim().length > 0
-      )
-      .map((item, index) => ({
-        id: `r${index + 1}`,
-        text: item.text.trim(),
-        kind: item.kind,
-        priority: item.priority
-      }));
-}
-  
-async function generateQuestionsWithLLM(
-    requirements: Requirement[],
-    fallback: Question[]
-  ): Promise<Question[]> {
-    const systemPrompt = `
-  You are an expert engineering interviewer.
-  
-  Generate practical interview questions from the supplied requirements.
-  
-  Return ONLY valid JSON:
-  
-  {
-    "questions": [
-      {
-        "requirement_index": 0,
-        "category": "technical",
-        "prompt": "Question...",
-        "answer_outline": "Answer should cover...",
-        "difficulty": 2
-      }
-    ]
-  }
-  
-  Allowed category values:
-  - technical
-  - behavioral
-  - system_design
-  - practical
-  - domain
-  
-  Difficulty must be:
-  1, 2, or 3.
-  
-  Rules:
-  - Every requirement should have at least one question.
-  - Questions must be specific to the requirement.
-  - Avoid generic questions such as "Tell me about your experience".
-  - Prefer practical, production-oriented questions.
-  - Do not invent technologies not present in the requirements.
-  `;
-  
-    const userPrompt = JSON.stringify(
-      requirements.map((requirement, index) => ({
-        index,
-        requirement: requirement.text,
-        kind: requirement.kind,
-        priority: requirement.priority
-      })),
-      null,
-      2
+
+    const llm = dedupeRequirements(
+      Array.isArray(result.requirements) ? result.requirements : []
     );
-  
+
+    return mergeRequirements(llm, fallback);
+  } catch {
+    return fallback;
+  }
+}
+
+async function generateQuestionsWithLLM(
+  requirements: Requirement[],
+  fallback: Question[]
+): Promise<Question[]> {
+  const systemPrompt = `
+You are an expert engineering interviewer.
+
+Generate practical interview questions from the supplied requirements.
+Return ONLY valid JSON:
+{
+  "questions": [
+    {
+      "requirement_index": 0,
+      "category": "technical",
+      "prompt": "Question...",
+      "answer_outline": "Answer should cover...",
+      "difficulty": 2
+    }
+  ]
+}
+
+Allowed category values: technical, behavioral, system_design, practical, domain.
+Difficulty must be 1, 2, or 3.
+
+Rules:
+- Every requirement must have at least one question when possible.
+- Questions must be specific to the supplied requirement.
+- Prefer practical, production-oriented, scenario, troubleshooting,
+  architecture, implementation, and trade-off questions.
+- Use behavioral questions for soft skills and concrete project questions for experience.
+- Do not invent technologies, tools, frameworks, databases, or services.
+- Do not use a predefined technology question list.
+- Do not ask generic questions when a requirement-specific question is possible.
+`;
+
+  try {
     const result = await generateJson<{
       questions?: Array<{
         requirement_index: number;
@@ -643,162 +443,445 @@ async function generateQuestionsWithLLM(
       }>;
     }>(
       systemPrompt,
-      userPrompt,
+      JSON.stringify(
+        requirements.map((requirement, index) => ({
+          index,
+          requirement: requirement.text,
+          kind: requirement.kind,
+          priority: requirement.priority
+        })),
+        null,
+        2
+      ),
       { questions: [] }
     );
-  
-    if (!result.questions?.length) {
-      return fallback;
-    }
-  
-    const questions = result.questions
-      .filter(
-        (item) =>
-          Number.isInteger(item.requirement_index) &&
-          item.requirement_index >= 0 &&
-          item.requirement_index < requirements.length &&
-          typeof item.prompt === "string" &&
-          item.prompt.trim().length > 0
-      )
-      .map((item, index) => ({
-        id: `q${index + 1}`,
-        requirement_ids: [
-          requirements[item.requirement_index].id
-        ],
-        category: item.category,
-        prompt: item.prompt.trim(),
-        answer_outline:
-          item.answer_outline?.trim() ||
-          "Explain your approach, technical decisions, trade-offs, testing, and result.",
-        difficulty:
-          [1, 2, 3].includes(item.difficulty)
-            ? item.difficulty
-            : 2
-      }));
-  
+
+    const questions = normalizeQuestions(result.questions, requirements);
     return questions.length > 0 ? questions : fallback;
+  } catch {
+    return fallback;
   }
-  export async function generateInterviewKit(
-    jd: string,
-    companyUrl: string,
-    daysAvailable: number
-  ): Promise<InterviewKit> {
-    const research = await researchCompany(
-      companyUrl
+}
+
+async function generateMissingQuestionsWithLLM(
+  requirements: Requirement[],
+  existingCount: number
+): Promise<Question[]> {
+  if (requirements.length === 0) return [];
+
+  const systemPrompt = `
+You are an expert engineering interviewer.
+
+The supplied requirements were missed by an earlier question-generation pass.
+Generate exactly one strong interview question for EACH supplied requirement.
+
+Return ONLY valid JSON:
+{
+  "questions": [
+    {
+      "requirement_index": 0,
+      "category": "technical",
+      "prompt": "Question...",
+      "answer_outline": "Answer should cover...",
+      "difficulty": 2
+    }
+  ]
+}
+
+Rules:
+- One question per supplied requirement.
+- The question must directly test the requirement.
+- Prefer practical/production scenarios.
+- Do not invent technologies or tools.
+`;
+
+  try {
+    const result = await generateJson<{
+      questions?: Array<{
+        requirement_index: number;
+        category: Question["category"];
+        prompt: string;
+        answer_outline: string;
+        difficulty: 1 | 2 | 3;
+      }>;
+    }>(
+      systemPrompt,
+      JSON.stringify({
+        existing_question_count: existingCount,
+        requirements: requirements.map((requirement, index) => ({
+          index,
+          requirement: requirement.text,
+          kind: requirement.kind,
+          priority: requirement.priority
+        }))
+      }, null, 2),
+      { questions: [] }
     );
-  
-    const extractedRequirements = extractRequirements(jd);
 
-    const requirements =
-    await generateRequirementsWithLLM(
-        jd,
-        extractedRequirements
-    );
+    const questions = normalizeQuestions(result.questions, requirements);
+    if (questions.length > 0) return questions;
+  } catch {
+    // Deterministic fallback below.
+  }
 
-    const roleInfo = extractRoleInfo(jd);
+  return requirements.map((requirement, index) => ({
+    id: `q${existingCount + index + 1}`,
+    requirement_ids: [requirement.id],
+    category: requirement.kind === "soft_skill"
+      ? "behavioral"
+      : requirement.kind === "domain"
+        ? "domain"
+        : "practical",
+    prompt:
+      `Give a concrete production example involving ${requirement.text}. ` +
+      "Explain the problem, your implementation or decision, trade-offs, " +
+      "testing/validation, and result.",
+    answer_outline:
+      "Explain the situation, your responsibility, implementation or decision, " +
+      "alternatives, testing, trade-offs, problems, and measurable outcome.",
+    difficulty: 2
+  }));
+}
 
-    const fallbackQuestions =
-    createQuestions(requirements);
+async function generateFlashcardsWithLLM(
+  requirements: Requirement[],
+  fallback: Flashcard[]
+): Promise<Flashcard[]> {
+  const systemPrompt = `
+You are an expert engineering interviewer creating interview-preparation flashcards.
 
-    let questions =
-    await generateQuestionsWithLLM(
-        requirements,
-        fallbackQuestions
-    );
+Generate one concise flashcard for each supplied requirement.
+Return ONLY valid JSON:
+{
+  "flashcards": [
+    {
+      "requirement_index": 0,
+      "front": "Question or key concept",
+      "back": "Concise answer or checklist"
+    }
+  ]
+}
 
-    let flashcards =
-    createFlashcards(requirements);
-          
-          let passes = 1;
-          
-          const firstPassUncovered = calculateCoverage(
-            requirements,
-            questions
-          );
-          
-          if (firstPassUncovered.length > 0) {
-            passes = 2;
-          
-            const uncoveredRequirements =
-              requirements.filter((requirement) =>
-                firstPassUncovered.includes(requirement.id)
-              );
-          
-            const secondPassQuestions =
-              createSecondPassQuestions(
-                uncoveredRequirements,
-                questions
-              );
-          
-            questions = [
-              ...questions,
-              ...secondPassQuestions
-            ];
-          
-            const secondPassFlashcards =
-              createFlashcards(uncoveredRequirements).map(
-                (flashcard, index) => ({
-                  ...flashcard,
-                  id: `f${flashcards.length + index + 1}`
-                })
-              );
-          
-            flashcards = [
-              ...flashcards,
-              ...secondPassFlashcards
-            ];
-          }
-          
-          const finalUncovered =
-            calculateCoverage(requirements, questions);
-  
-            const scheduleDays = allocateSchedule(
-                questions,
-                requirements,
-                daysAvailable
-              );
-  
-    return {
-      source: {
-        company:
-          new URL(companyUrl).hostname,
-        company_url: companyUrl,
-        role:
-          "Interview Preparation",
-            location: "",
-        jd,
-        jd_chars: jd.length,
-        researched_at:
-          new Date().toISOString(),
-        pages_used: research.sources
-      },
-  
-      company_brief: createCompanyBrief(
-        companyUrl,
-        research.pages
+Rules:
+- Generate one flashcard per requirement.
+- Be specific to the supplied requirement.
+- Preserve technology names.
+- The back should contain useful quick-revision points.
+- Do not invent technologies, tools, APIs, or services.
+`;
+
+  try {
+    const result = await generateJson<{
+      flashcards?: Array<{
+        requirement_index: number;
+        front: string;
+        back: string;
+      }>;
+    }>(
+      systemPrompt,
+      JSON.stringify(
+        requirements.map((requirement, index) => ({
+          index,
+          requirement: requirement.text,
+          kind: requirement.kind,
+          priority: requirement.priority
+        })),
+        null,
+        2
       ),
-  
-      role: {
-        title: roleInfo.title,
-        seniority: roleInfo.seniority,
-        responsibilities: roleInfo.responsibilities,
-        requirements
-      },
-  
-      questions,
-  
-      flashcards,
-  
-      schedule: {
-        days_available: scheduleDays.length,
-        days: scheduleDays
-      },
-  
-      coverage: {
-        uncovered_requirement_ids: finalUncovered,
-        passes
-      }
+      { flashcards: [] }
+    );
+
+    const flashcards = normalizeFlashcards(
+      result.flashcards,
+      requirements
+    );
+
+    return flashcards.length > 0 ? flashcards : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+async function generateMissingFlashcardsWithLLM(
+  requirements: Requirement[],
+  existingCount: number
+): Promise<Flashcard[]> {
+  if (requirements.length === 0) return [];
+
+  const systemPrompt = `
+You are an expert engineering interviewer.
+Generate exactly one concise interview-preparation flashcard for each supplied requirement.
+Return ONLY valid JSON:
+{
+  "flashcards": [
+    {
+      "requirement_index": 0,
+      "front": "Question or key concept",
+      "back": "Concise answer or checklist"
+    }
+  ]
+}
+Rules:
+- Be specific to each requirement.
+- Do not invent technologies or tools.
+- Keep answers useful for quick interview revision.
+`;
+
+  try {
+    const result = await generateJson<{
+      flashcards?: Array<{
+        requirement_index: number;
+        front: string;
+        back: string;
+      }>;
+    }>(
+      systemPrompt,
+      JSON.stringify({
+        existing_flashcard_count: existingCount,
+        requirements: requirements.map((requirement, index) => ({
+          index,
+          requirement: requirement.text,
+          kind: requirement.kind,
+          priority: requirement.priority
+        }))
+      }, null, 2),
+      { flashcards: [] }
+    );
+
+    const flashcards = normalizeFlashcards(
+      result.flashcards,
+      requirements
+    );
+
+    if (flashcards.length > 0) return flashcards;
+  } catch {
+    // Deterministic fallback below.
+  }
+
+  return requirements.map((requirement, index) => ({
+    id: `f${existingCount + index + 1}`,
+    front: requirement.text,
+    back: DEFAULT_FLASHCARD_BACK,
+    requirement_ids: [requirement.id]
+  }));
+}
+
+function createCompanyBrief(
+  companyUrl: string,
+  pages: Array<{ url: string; title: string; text: string }>
+) {
+  const companyName = new URL(companyUrl).hostname
+    .replace(/^www\./, "")
+    .split(".")[0]
+    .replace(/[-_]/g, " ");
+
+  if (pages.length === 0) {
+    return {
+      summary: `Company research was unavailable for ${companyName}.`,
+      what_they_do:
+        "No company website content was available. The interview kit was generated primarily from the job description.",
+      sources: []
     };
   }
-  
-  
+
+  const usefulPages = pages
+    .filter((page) => page.text.length > 50)
+    .slice(0, 5);
+
+  const combinedText = usefulPages
+    .map((page) => `${page.title ? `${page.title}. ` : ""}${page.text}`)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const selected = combinedText
+    .split(/(?<=[.!?])\s+/)
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => sentence.length >= 40)
+    .slice(0, 4);
+
+  return {
+    summary:
+      `Research completed using ${usefulPages.length} company website page(s).`,
+    what_they_do:
+      (selected.length > 0 ? selected.join(" ") : combinedText).slice(0, 1000),
+    sources: usefulPages.map((page) => page.url)
+  };
+}
+
+function extractRoleInfo(jd: string) {
+  const text = jd
+    .replace(/\r/g, "\n")
+    .replace(/[•●▪]/g, "\n")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  let title = "Engineering Role";
+  const titleMatch = text.match(
+    /\b(Senior|Lead|Principal|Staff|Junior|Mid[- ]Level)?\s*(Backend|Frontend|Full[- ]Stack|Software|Web|Platform|DevOps|Data|Cloud)?\s*(Engineer|Developer|Architect)\b/i
+  );
+
+  if (titleMatch) title = titleMatch[0].trim();
+
+  let seniority = "Mid";
+  if (/\bprincipal\b|\bstaff\b/i.test(text)) seniority = "Staff/Principal";
+  else if (/\blead\b/i.test(text)) seniority = "Lead";
+  else if (/\bsenior\b/i.test(text)) seniority = "Senior";
+  else if (/\bjunior\b/i.test(text)) seniority = "Junior";
+
+  const responsibilitySection = text.match(
+    /(?:responsibilities|what you.ll do|you will|role responsibilities)\s*[:\-]?\s*(.*?)(?=\b(?:requirements|qualifications|skills|preferred|experience)\b|$)/i
+  );
+
+  let responsibilities: string[] = [];
+  if (responsibilitySection?.[1]) {
+    responsibilities = responsibilitySection[1]
+      .split(/(?<=[.!?])\s+|;\s+/)
+      .map((item) => item.trim())
+      .filter((item) => item.length >= 20)
+      .slice(0, 10);
+  }
+
+  if (responsibilities.length === 0) {
+    responsibilities = text
+      .split(/(?<=[.!?])\s+/)
+      .map((sentence) => sentence.trim())
+      .filter(
+        (sentence) =>
+          sentence.length >= 30 &&
+          /build|develop|design|maintain|implement|lead|manage|deploy/i.test(sentence)
+      )
+      .slice(0, 8);
+  }
+
+  return { title, seniority, responsibilities };
+}
+
+export async function generateInterviewKit(
+  jd: string,
+  companyUrl: string,
+  daysAvailable: number
+): Promise<InterviewKit> {
+  if (!jd || jd.trim().length < 20) {
+    throw new Error("Job description is too short to generate an interview kit.");
+  }
+
+  if (!Number.isInteger(daysAvailable) || daysAvailable < 1) {
+    throw new Error("daysAvailable must be a positive integer.");
+  }
+
+  const research = await researchCompany(companyUrl);
+
+  // 1. LLM is the primary requirement extractor. The deterministic extractor
+  //    is only a safety net and is merged rather than replacing LLM output.
+  const fallbackRequirements = extractRequirements(jd);
+  const requirements = await generateRequirementsWithLLM(
+    jd,
+    fallbackRequirements
+  );
+
+  if (requirements.length === 0) {
+    throw new Error(
+      "Unable to identify interview requirements from the job description."
+    );
+  }
+
+  // 2. Generate questions from the actual extracted requirements. There is
+  //    intentionally no fixed Node/Express/Mongo/etc. question list.
+  let questions = await generateQuestionsWithLLM(
+    requirements,
+    createFallbackQuestions(requirements)
+  );
+
+  // 3. Coverage validation + second LLM pass for anything missed.
+  let passes = 1;
+  let uncovered = calculateCoverage(requirements, questions);
+
+  if (uncovered.length > 0) {
+    passes = 2;
+
+    const missingRequirements = requirements.filter((requirement) =>
+      uncovered.includes(requirement.id)
+    );
+
+    const missingQuestions = await generateMissingQuestionsWithLLM(
+      missingRequirements,
+      questions.length
+    );
+
+    questions = [...questions, ...missingQuestions];
+    uncovered = calculateCoverage(requirements, questions);
+  }
+
+  // 4. Generate flashcards from the same requirement set so arbitrary JD
+  //    technologies are covered here as well.
+  let flashcards = await generateFlashcardsWithLLM(
+    requirements,
+    createFallbackFlashcards(requirements)
+  );
+
+  // 5. Ensure every requirement has a flashcard.
+  const flashcardCoverage = new Set(
+    flashcards.flatMap((flashcard) => flashcard.requirement_ids)
+  );
+
+  const missingFlashcardRequirements = requirements.filter(
+    (requirement) => !flashcardCoverage.has(requirement.id)
+  );
+
+  if (missingFlashcardRequirements.length > 0) {
+    const missingFlashcards = await generateMissingFlashcardsWithLLM(
+      missingFlashcardRequirements,
+      flashcards.length
+    );
+    flashcards = [...flashcards, ...missingFlashcards];
+  }
+
+  // 6. Final coverage is persisted for the UI/assessment.
+  const finalUncovered = calculateCoverage(requirements, questions);
+
+  // 7. Schedule uses the generated requirements/questions and requested days.
+  const scheduleDays = allocateSchedule(
+    questions,
+    requirements,
+    daysAvailable
+  );
+
+  const roleInfo = extractRoleInfo(jd);
+
+  return {
+    source: {
+      company: new URL(companyUrl).hostname,
+      company_url: companyUrl,
+      role: "Interview Preparation",
+      location: "",
+      jd,
+      jd_chars: jd.length,
+      researched_at: new Date().toISOString(),
+      pages_used: research.sources
+    },
+
+    company_brief: createCompanyBrief(companyUrl, research.pages),
+
+    role: {
+      title: roleInfo.title,
+      seniority: roleInfo.seniority,
+      responsibilities: roleInfo.responsibilities,
+      requirements
+    },
+
+    questions,
+    flashcards,
+
+    schedule: {
+      days_available: scheduleDays.length,
+      days: scheduleDays
+    },
+
+    coverage: {
+      uncovered_requirement_ids: finalUncovered,
+      passes
+    }
+  };
+}
