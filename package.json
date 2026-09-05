@@ -8,14 +8,17 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "test": "vitest run",
-    "evaluate": "tsx scripts/evaluate.ts"
+    "evaluate": "tsx scripts/evaluate.ts",
+    "verify": "npm run build && npm test"
   },
   "dependencies": {
     "cheerio": "^1.0.0",
     "cookie-parser": "^1.4.7",
-    "cors": "^2.8.5",
+    "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.1.0",
+    "express-rate-limit": "^8.7.0",
+    "helmet": "^8.3.0",
     "mongodb": "^6.18.0",
     "zod": "^4.1.5"
   },
@@ -25,7 +28,7 @@
     "@types/express": "^5.0.3",
     "@types/node": "^24.3.0",
     "tsx": "^4.19.2",
-    "typescript": "^5.9.2",
+    "typescript": "^7.0.2",
     "vitest": "^3.2.4"
   }
 }

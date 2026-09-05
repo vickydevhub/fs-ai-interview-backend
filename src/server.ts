@@ -2,6 +2,9 @@ import express from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 
+import helmet from "helmet";
+import { rateLimit } from "express-rate-limit";
+
 import { env } from "./config.js";
 import { checkDatabase } from "./db.js";
 import {
@@ -23,6 +26,8 @@ import { validateKit } from "./validation/validator.js";
 
 const app = express();
 
+app.use(helmet());
+
 app.use(
   cors({
     origin: env.FRONTEND_URL
@@ -32,7 +37,16 @@ app.use(
   })
 );
 
-app.use(express.json());
+app.use(
+  rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 100,
+    standardHeaders: true,
+    legacyHeaders: false,
+  })
+);
+
+app.use(express.json({ limit: "1mb" }));
 app.use(cookieParser());
 
 async function authenticatedUser(
