@@ -79,14 +79,48 @@ describe("allocateSchedule", () => {
     expect(new Set(scheduledQuestionIds).size).toBe(4);
   });
 
-  it("does not create more days than questions", () => {
+  it("creates exactly the requested number of days", () => {
+    const questions: Question[] = [
+      {
+        id: "q1",
+        requirement_ids: ["r1"],
+        category: "technical",
+        prompt: "Question 1",
+        answer_outline: "Answer 1",
+        difficulty: 1,
+      },
+      {
+        id: "q2",
+        requirement_ids: ["r2"],
+        category: "technical",
+        prompt: "Question 2",
+        answer_outline: "Answer 2",
+        difficulty: 1,
+      },
+    ];
+  
+    const requirements: Requirement[] = [
+      {
+        id: "r1",
+        text: "Requirement 1",
+        kind: "technical",
+        priority: "must",
+      },
+      {
+        id: "r2",
+        text: "Requirement 2",
+        kind: "technical",
+        priority: "preferred",
+      },
+    ];
+  
     const schedule = allocateSchedule(
-      questions.slice(0, 2),
+      questions,
       requirements,
       5
     );
-
-    expect(schedule).toHaveLength(2);
+  
+    expect(schedule).toHaveLength(5);
   });
 
   it("assigns a useful focus to each day", () => {
@@ -109,5 +143,47 @@ describe("allocateSchedule", () => {
         0
       )
     ).toThrow("daysAvailable must be greater than zero");
+  });
+
+  it("supports a 60-day schedule", () => {
+    const questions: Question[] = [
+      {
+        id: "q1",
+        requirement_ids: ["r1"],
+        category: "technical",
+        prompt: "Question 1",
+        answer_outline: "Answer 1",
+        difficulty: 1,
+      },
+    ];
+  
+    const requirements: Requirement[] = [
+      {
+        id: "r1",
+        text: "Requirement 1",
+        kind: "technical",
+        priority: "must",
+      },
+    ];
+  
+    const schedule = allocateSchedule(
+      questions,
+      requirements,
+      60
+    );
+  
+    expect(schedule).toHaveLength(60);
+    expect(schedule[0].day).toBe(1);
+    expect(schedule[59].day).toBe(60);
+  });
+
+  it("rejects more than 60 available days", () => {
+    expect(() =>
+      allocateSchedule(
+        [],
+        [],
+        61
+      )
+    ).toThrow("daysAvailable must be between 1 and 60");
   });
 });

@@ -12,7 +12,15 @@ export function allocateSchedule(
   requirements: Requirement[],
   daysAvailable: number
 ): ScheduleDay[] {
-  if (!Number.isInteger(daysAvailable) || daysAvailable < 1 || daysAvailable > 60) {
+  if (!Number.isInteger(daysAvailable)) {
+    throw new Error("daysAvailable must be an integer");
+  }
+
+  if (daysAvailable <= 0) {
+    throw new Error("daysAvailable must be greater than zero");
+  }
+
+  if (daysAvailable > 60) {
     throw new Error("daysAvailable must be between 1 and 60");
   }
 
@@ -26,13 +34,12 @@ export function allocateSchedule(
     })
   );
 
-  // Distribute questions across the requested number of days.
   questions.forEach((question, index) => {
     const dayIndex = index % daysAvailable;
+
     days[dayIndex].question_ids.push(question.id);
   });
 
-  // Set focus based on the first question assigned to each day.
   for (const day of days) {
     const question = questions.find((item) =>
       day.question_ids.includes(item.id)
@@ -43,15 +50,13 @@ export function allocateSchedule(
         question.requirement_ids.includes(item.id)
       );
 
-      day.focus = requirement?.text ?? "Interview preparation";
+      day.focus =
+        requirement?.text ?? "Interview preparation";
     } else {
-      // No new question available for this day.
-      // Use review/practice instead of inventing question IDs.
       day.focus = "Review and practice";
     }
   }
 
-  // Safety check: always return exactly the requested number of days.
   if (days.length !== daysAvailable) {
     throw new Error(
       `Unable to create exactly ${daysAvailable} schedule days`
