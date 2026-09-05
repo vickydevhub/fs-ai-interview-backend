@@ -757,21 +757,89 @@ function extractRoleInfo(jd: string) {
 
   return { title, seniority, responsibilities };
 }
+function validateJobDescription(jd: string): void {
+  const text = normalizeText(jd);
+
+  if (text.length < 80) {
+    throw new Error(
+      "Job description is too short to generate a reliable interview kit."
+    );
+  }
+
+  const words = text.split(/\s+/).filter(Boolean);
+
+  if (words.length < 15) {
+    throw new Error(
+      "Job description does not contain enough information."
+    );
+  }
+}
+
+function validateCompanyUrl(companyUrl: string): URL {
+  const value = normalizeText(companyUrl);
+
+  if (!value) {
+    throw new Error("Company URL is required.");
+  }
+
+  let url: URL;
+
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error("Company URL is invalid.");
+  }
+
+  if (!["http:", "https:"].includes(url.protocol)) {
+    throw new Error("Company URL must use HTTP or HTTPS.");
+  }
+
+  return url;
+}
+
+function validateGeneratedKit(
+  requirements: Requirement[],
+  questions: Question[],
+  flashcards: Flashcard[],
+  scheduleDays: unknown[]
+): void {
+  if (requirements.length === 0) {
+    throw new Error("No interview requirements were generated.");
+  }
+
+  if (questions.length === 0) {
+    throw new Error("No interview questions were generated.");
+  }
+
+  if (flashcards.length === 0) {
+    throw new Error("No flashcards were generated.");
+  }
+
+  if (scheduleDays.length === 0) {
+    throw new Error("No study schedule was generated.");
+  }
+}
 
 export async function generateInterviewKit(
   jd: string,
   companyUrl: string,
   daysAvailable: number
 ): Promise<InterviewKit> {
-  if (!jd || jd.trim().length < 20) {
-    throw new Error("Job description is too short to generate an interview kit.");
+  validateJobDescription(jd);
+
+  const validatedCompanyUrl = validateCompanyUrl(companyUrl);
+
+  if (
+    !Number.isInteger(daysAvailable) ||
+    daysAvailable < 1 ||
+    daysAvailable > 60
+  ) {
+    throw new Error(
+      "Schedule must be between 1 and 60 days."
+    );
   }
 
-  if (!Number.isInteger(daysAvailable) || daysAvailable < 1) {
-    throw new Error("daysAvailable must be a positive integer.");
-  }
-
-  const research = await researchCompany(companyUrl);
+  const research = await researchCompany(validatedCompanyUrl.toString());
 
   // 1. LLM is the primary requirement extractor. The deterministic extractor
   //    is only a safety net and is merged rather than replacing LLM output.
@@ -849,6 +917,13 @@ export async function generateInterviewKit(
   );
 
   const roleInfo = extractRoleInfo(jd);
+
+  validateGeneratedKit(
+    requirements,
+    questions,
+    flashcards,
+    scheduleDays
+  );
 
   return {
     source: {

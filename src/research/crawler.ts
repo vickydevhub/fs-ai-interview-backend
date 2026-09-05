@@ -8,31 +8,46 @@ interface ResearchPage {
 }
 
 function isPrivateHost(hostname: string): boolean {
-  const host = hostname.toLowerCase();
+  const host = hostname.toLowerCase().trim();
 
-  return (
+  if (process.env.NODE_ENV !== "production") {
+    return false;
+  }
+
+  if (
     host === "localhost" ||
     host === "127.0.0.1" ||
     host === "::1" ||
-    host.startsWith("10.") ||
-    host.startsWith("192.168.") ||
-    host.startsWith("172.16.") ||
-    host.startsWith("172.17.") ||
-    host.startsWith("172.18.") ||
-    host.startsWith("172.19.") ||
-    host.startsWith("172.20.") ||
-    host.startsWith("172.21.") ||
-    host.startsWith("172.22.") ||
-    host.startsWith("172.23.") ||
-    host.startsWith("172.24.") ||
-    host.startsWith("172.25.") ||
-    host.startsWith("172.26.") ||
-    host.startsWith("172.27.") ||
-    host.startsWith("172.28.") ||
-    host.startsWith("172.29.") ||
-    host.startsWith("172.30.") ||
-    host.startsWith("172.31.")
-  );
+    host === "[::1]"
+  ) {
+    return true;
+  }
+
+  const ipv4Parts = host.split(".").map(Number);
+
+  if (
+    ipv4Parts.length === 4 &&
+    ipv4Parts.every((part) => Number.isInteger(part) && part >= 0 && part <= 255)
+  ) {
+    const [a, b] = ipv4Parts;
+
+    // 10.0.0.0/8
+    if (a === 10) {
+      return true;
+    }
+
+    // 172.16.0.0/12
+    if (a === 172 && b >= 16 && b <= 31) {
+      return true;
+    }
+
+    // 192.168.0.0/16
+    if (a === 192 && b === 168) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 async function fetchPage(url: string): Promise<ResearchPage | null> {
